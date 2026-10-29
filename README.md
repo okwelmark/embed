@@ -5,7 +5,7 @@ ESP32 smart-control demo built with PlatformIO and ESP-IDF. The firmware models 
 ## Features
 
 - Tracks people entering and leaving through serial CLI commands.
-- Counts room entries and exits from the order of two PIR sensors at each doorway.
+- Counts room entries and exits from two PIR sensors at each doorway.
 - Turns each room light on while its occupancy count is greater than zero.
 - Logs entrance and room-light events to `/sdcard/log.csv`.
 - Includes a Wokwi circuit diagram for ESP32 simulation.
@@ -27,7 +27,7 @@ ESP32 smart-control demo built with PlatformIO and ESP-IDF. The firmware models 
 | SD card MISO | 19 |
 | SD card SCK | 18 |
 
-The two sensors for a room must be placed in order at its doorway. The firmware interprets entry as `entry PIR -> exit PIR` and leaving as `exit PIR -> entry PIR`. A sequence must complete within 1.5 seconds; incomplete sequences are ignored. Servo control and RFID validation are marked as TODOs in `src/main.c`.
+Each room starts with entry and exit counters at zero in RAM. An entry PIR edge increments the entry counter immediately. An exit PIR edge increments the exit counter only when it is lower than the entry counter, so exits can never exceed entries. The light is on exactly while `entries > exits`. Event logs are queued for the SD card without blocking the room tasks. Servo control and RFID validation are marked as TODOs in `src/main.c`.
 
 ## Build and upload
 

@@ -22,7 +22,6 @@
 static const int PIR_IN_PIN[2]  = {32, 34};
 static const int PIR_OUT_PIN[2] = {33, 35};
 static const int LIGHT_PIN[2] = {27, 14};
-#define SENSOR_SEQUENCE_TIMEOUT_MS 10000
 #define SD_CS_PIN 5
 #define SD_MOSI_PIN 23
 #define SD_MISO_PIN 19
@@ -126,38 +125,12 @@ static void room_task(void *arg) {
     int r = (int)(intptr_t)arg;
     bool previous_in = false;
     bool previous_out = false;
-    int sequence = 0;
-    TickType_t sequence_started = 0;
 
     for (;;) {
-        TickType_t now = xTaskGetTickCount();
         bool sensor_in = gpio_get_level(PIR_IN_PIN[r]);
         bool sensor_out = gpio_get_level(PIR_OUT_PIN[r]);
         bool rising_in = sensor_in && !previous_in;
         bool rising_out = sensor_out && !previous_out;
-        bool entered = false;
-        bool exited = false;
-
-        if (sequence != 0 &&
-            now - sequence_started > pdMS_TO_TICKS(SENSOR_SEQUENCE_TIMEOUT_MS)) {
-            sequence = 0;
-        }
-
-        if (sequence == 0) {
-            if (rising_in) {
-                sequence = 1;
-                sequence_started = now;
-            } else if (rising_out) {
-                sequence = 2;
-                sequence_started = now;
-            }
-        } else if (sequence == 1 && rising_out) {
-            entered = true;
-            sequence = 0;
-        } else if (sequence == 2 && rising_in) {
-            exited = true;
-            sequence = 0;
-        }
 
         previous_in = sensor_in;
         previous_out = sensor_out;
@@ -169,12 +142,14 @@ static void room_task(void *arg) {
             ESP_LOGI(TAG, "ROOM%d exit PIR detected", r + 1);
         }
 
-        if (entered || exited) {
+        if (rising_in || rising_out) {
+            bool counted_exit = false;
             xSemaphoreTake(S_mtx, portMAX_DELAY);
-            if (entered) {
+            if (rising_in) {
                 S.room_entries[r]++;
-            } else {
+            } else if (S.room_exits[r] < S.room_entries[r]) {
                 S.room_exits[r]++;
+                counted_exit = true;
             }
             bool want = S.room_entries[r] > S.room_exits[r];
             bool changed = (S.light[r] != want);
@@ -184,7 +159,8 @@ static void room_task(void *arg) {
 
             char m[64];
             snprintf(m, sizeof m, "ROOM%d,%s,occupancy=%d", r + 1,
-                     entered ? "IN" : "OUT", occupancy);
+                     rising_in ? "IN" : (counted_exit ? "OUT" : "OUT_IGNORED"),
+                     occupancy);
             logf_(m);
             if (changed) {
                 gpio_set_level(LIGHT_PIN[r], want);
