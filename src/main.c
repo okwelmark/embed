@@ -28,7 +28,12 @@ static const int LIGHT_PIN[2] = {27, 14};
 #define SD_MISO_PIN 19
 #define SD_SCK_PIN 18
 
-typedef struct { int inside; int room_occ[2]; bool light[2]; } state_t;
+typedef struct {
+    int inside;
+    int room_entries[2];
+    int room_exits[2];
+    bool light[2];
+} state_t;
 typedef struct { bool in; char uid[16]; } tap_t;
 
 static state_t S;
@@ -167,14 +172,14 @@ static void room_task(void *arg) {
         if (entered || exited) {
             xSemaphoreTake(S_mtx, portMAX_DELAY);
             if (entered) {
-                S.room_occ[r]++;
-            } else if (S.room_occ[r] > 0) {
-                S.room_occ[r]--;
+                S.room_entries[r]++;
+            } else {
+                S.room_exits[r]++;
             }
-            bool want = S.room_occ[r] > 0;
+            bool want = S.room_entries[r] > S.room_exits[r];
             bool changed = (S.light[r] != want);
             S.light[r] = want;
-            int occupancy = S.room_occ[r];
+            int occupancy = S.room_entries[r] - S.room_exits[r];
             xSemaphoreGive(S_mtx);
 
             char m[64];
@@ -205,8 +210,9 @@ static void cli_task(void *a) {
             xQueueSend(tap_q, &t, 0);
         } else if (strcmp(buf, "status") == 0) {
             xSemaphoreTake(S_mtx, portMAX_DELAY);
-            printf("inside=%d room1=%d(light %d) room2=%d(light %d)\n", S.inside,
-                   S.room_occ[0], S.light[0], S.room_occ[1], S.light[1]);
+             printf("inside=%d room1=in:%d out:%d(light %d) room2=in:%d out:%d(light %d)\n",
+                 S.inside, S.room_entries[0], S.room_exits[0], S.light[0],
+                 S.room_entries[1], S.room_exits[1], S.light[1]);
             xSemaphoreGive(S_mtx);
         }
         printf("> ");
