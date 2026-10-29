@@ -22,7 +22,7 @@
 static const int PIR_IN_PIN[2]  = {32, 34};
 static const int PIR_OUT_PIN[2] = {33, 35};
 static const int LIGHT_PIN[2] = {27, 14};
-#define SENSOR_SEQUENCE_TIMEOUT_MS 1500
+#define SENSOR_SEQUENCE_TIMEOUT_MS 10000
 #define SD_CS_PIN 5
 #define SD_MOSI_PIN 23
 #define SD_MISO_PIN 19
@@ -157,6 +157,13 @@ static void room_task(void *arg) {
         previous_in = sensor_in;
         previous_out = sensor_out;
 
+        if (rising_in) {
+            ESP_LOGI(TAG, "ROOM%d entry PIR detected", r + 1);
+        }
+        if (rising_out) {
+            ESP_LOGI(TAG, "ROOM%d exit PIR detected", r + 1);
+        }
+
         if (entered || exited) {
             xSemaphoreTake(S_mtx, portMAX_DELAY);
             if (entered) {
@@ -215,6 +222,7 @@ void app_main(void) {
         gpio_set_direction(PIR_IN_PIN[i], GPIO_MODE_INPUT);
         gpio_set_direction(PIR_OUT_PIN[i], GPIO_MODE_INPUT);
         gpio_set_direction(LIGHT_PIN[i], GPIO_MODE_OUTPUT);
+        gpio_set_level(LIGHT_PIN[i], 0);
     }
     xTaskCreate(logger_task,   "logger",   4096, NULL, 4, NULL);
     xTaskCreate(entrance_task, "entrance", 4096, NULL, 5, NULL);
