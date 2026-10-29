@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -18,9 +19,10 @@
 #include "driver/spi_common.h"
 
 #define TAG "cocis"
-static const int PIR_PIN[2]   = {32, 33};
+static const int PIR_IN_PIN[2]  = {32, 34};
+static const int PIR_OUT_PIN[2] = {33, 35};
 static const int LIGHT_PIN[2] = {27, 14};
-#define LIGHT_TIMEOUT_MS 10000   /* demo value; use minutes in real life */
+#define SENSOR_SEQUENCE_TIMEOUT_MS 1500
 #define SD_CS_PIN 5
 #define SD_MOSI_PIN 23
 #define SD_MISO_PIN 19
@@ -117,22 +119,68 @@ static void entrance_task(void *a) {
 
 static void room_task(void *arg) {
     int r = (int)(intptr_t)arg;
-    TickType_t last_motion = 0;
+    bool previous_in = false;
+    bool previous_out = false;
+    int sequence = 0;
+    TickType_t sequence_started = 0;
+
     for (;;) {
         TickType_t now = xTaskGetTickCount();
-        bool motion = gpio_get_level(PIR_PIN[r]);
-        if (motion) last_motion = now;
-        bool want = last_motion && (now - last_motion) < pdMS_TO_TICKS(LIGHT_TIMEOUT_MS);
-        xSemaphoreTake(S_mtx, portMAX_DELAY);
-        bool changed = (S.light[r] != want);
-        S.light[r] = want; S.room_occ[r] = want;
-        xSemaphoreGive(S_mtx);
-        if (changed) {
-            gpio_set_level(LIGHT_PIN[r], want);
-            char m[48]; snprintf(m, sizeof m, "ROOM%d,light=%d", r + 1, want);
-            logf_(m);
+        bool sensor_in = gpio_get_level(PIR_IN_PIN[r]);
+        bool sensor_out = gpio_get_level(PIR_OUT_PIN[r]);
+        bool rising_in = sensor_in && !previous_in;
+        bool rising_out = sensor_out && !previous_out;
+        bool entered = false;
+        bool exited = false;
+
+        if (sequence != 0 &&
+            now - sequence_started > pdMS_TO_TICKS(SENSOR_SEQUENCE_TIMEOUT_MS)) {
+            sequence = 0;
         }
-        vTaskDelay(pdMS_TO_TICKS(200));
+
+        if (sequence == 0) {
+            if (rising_in) {
+                sequence = 1;
+                sequence_started = now;
+            } else if (rising_out) {
+                sequence = 2;
+                sequence_started = now;
+            }
+        } else if (sequence == 1 && rising_out) {
+            entered = true;
+            sequence = 0;
+        } else if (sequence == 2 && rising_in) {
+            exited = true;
+            sequence = 0;
+        }
+
+        previous_in = sensor_in;
+        previous_out = sensor_out;
+
+        if (entered || exited) {
+            xSemaphoreTake(S_mtx, portMAX_DELAY);
+            if (entered) {
+                S.room_occ[r]++;
+            } else if (S.room_occ[r] > 0) {
+                S.room_occ[r]--;
+            }
+            bool want = S.room_occ[r] > 0;
+            bool changed = (S.light[r] != want);
+            S.light[r] = want;
+            int occupancy = S.room_occ[r];
+            xSemaphoreGive(S_mtx);
+
+            char m[64];
+            snprintf(m, sizeof m, "ROOM%d,%s,occupancy=%d", r + 1,
+                     entered ? "IN" : "OUT", occupancy);
+            logf_(m);
+            if (changed) {
+                gpio_set_level(LIGHT_PIN[r], want);
+                snprintf(m, sizeof m, "ROOM%d,light=%d", r + 1, want);
+                logf_(m);
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(50));
     }
 }
 
@@ -164,7 +212,8 @@ void app_main(void) {
     tap_q = xQueueCreate(8, sizeof(tap_t));
     log_q = xQueueCreate(16, 96);
     for (int i = 0; i < 2; i++) {
-        gpio_set_direction(PIR_PIN[i], GPIO_MODE_INPUT);
+        gpio_set_direction(PIR_IN_PIN[i], GPIO_MODE_INPUT);
+        gpio_set_direction(PIR_OUT_PIN[i], GPIO_MODE_INPUT);
         gpio_set_direction(LIGHT_PIN[i], GPIO_MODE_OUTPUT);
     }
     xTaskCreate(logger_task,   "logger",   4096, NULL, 4, NULL);
