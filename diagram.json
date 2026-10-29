@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "author": "CoCIS group",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "board-esp32-devkit-c-v4", "id": "esp", "top": 0, "left": 0, "attrs": {} },
+    { "type": "wokwi-pir-motion-sensor", "id": "pir1", "top": -120, "left": 200, "attrs": {} },
+    { "type": "wokwi-pir-motion-sensor", "id": "pir2", "top": -120, "left": 320, "attrs": {} },
+    { "type": "wokwi-led", "id": "light1", "top": 100, "left": 220, "attrs": { "color": "yellow" } },
+    { "type": "wokwi-led", "id": "light2", "top": 100, "left": 280, "attrs": { "color": "yellow" } },
+    { "type": "wokwi-servo", "id": "doorIn", "top": 160, "left": 360, "attrs": {} },
+    { "type": "wokwi-servo", "id": "doorOut", "top": 280, "left": 360, "attrs": {} },
+    { "type": "wokwi-microsd-card", "id": "sd", "top": 100, "left": -200, "attrs": {} }
+  ],
+  "connections": [
+    ["esp:TX", "$serialMonitor:RX", "", []],
+    ["esp:RX", "$serialMonitor:TX", "", []],
+    ["pir1:VCC", "esp:5V", "red", []], ["pir1:GND", "esp:GND.1", "black", []], ["pir1:OUT", "esp:32", "green", []],
+    ["pir2:VCC", "esp:5V", "red", []], ["pir2:GND", "esp:GND.1", "black", []], ["pir2:OUT", "esp:33", "green", []],
+    ["light1:A", "esp:27", "orange", []], ["light1:C", "esp:GND.1", "black", []],
+    ["light2:A", "esp:14", "orange", []], ["light2:C", "esp:GND.1", "black", []],
+    ["doorIn:V+", "esp:5V", "red", []], ["doorIn:GND", "esp:GND.1", "black", []], ["doorIn:PWM", "esp:25", "blue", []],
+    ["doorOut:V+", "esp:5V", "red", []], ["doorOut:GND", "esp:GND.1", "black", []], ["doorOut:PWM", "esp:26", "blue", []],
+    ["sd:VCC", "esp:3V3", "red", []], ["sd:GND", "esp:GND.1", "black", []],
+    ["sd:CS", "esp:5", "yellow", []], ["sd:DI", "esp:23", "yellow", []],
+    ["sd:DO", "esp:19", "yellow", []], ["sd:SCK", "esp:18", "yellow", []]
+  ]
+}
