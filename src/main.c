@@ -22,13 +22,17 @@
 static const int PIR_IN_PIN[2]  = {32, 34};
 static const int PIR_OUT_PIN[2] = {33, 35};
 static const int LIGHT_PIN[2] = {27, 14};
-#define SENSOR_SEQUENCE_TIMEOUT_MS 1500
 #define SD_CS_PIN 5
 #define SD_MOSI_PIN 23
 #define SD_MISO_PIN 19
 #define SD_SCK_PIN 18
 
-typedef struct { int inside; int room_occ[2]; bool light[2]; } state_t;
+typedef struct {
+    int inside;
+    int room_entries[2];
+    int room_exits[2];
+    bool light[2];
+} state_t;
 typedef struct { bool in; char uid[16]; } tap_t;
 
 static state_t S;
@@ -121,58 +125,42 @@ static void room_task(void *arg) {
     int r = (int)(intptr_t)arg;
     bool previous_in = false;
     bool previous_out = false;
-    int sequence = 0;
-    TickType_t sequence_started = 0;
 
     for (;;) {
-        TickType_t now = xTaskGetTickCount();
         bool sensor_in = gpio_get_level(PIR_IN_PIN[r]);
         bool sensor_out = gpio_get_level(PIR_OUT_PIN[r]);
         bool rising_in = sensor_in && !previous_in;
         bool rising_out = sensor_out && !previous_out;
-        bool entered = false;
-        bool exited = false;
-
-        if (sequence != 0 &&
-            now - sequence_started > pdMS_TO_TICKS(SENSOR_SEQUENCE_TIMEOUT_MS)) {
-            sequence = 0;
-        }
-
-        if (sequence == 0) {
-            if (rising_in) {
-                sequence = 1;
-                sequence_started = now;
-            } else if (rising_out) {
-                sequence = 2;
-                sequence_started = now;
-            }
-        } else if (sequence == 1 && rising_out) {
-            entered = true;
-            sequence = 0;
-        } else if (sequence == 2 && rising_in) {
-            exited = true;
-            sequence = 0;
-        }
 
         previous_in = sensor_in;
         previous_out = sensor_out;
 
-        if (entered || exited) {
+        if (rising_in) {
+            ESP_LOGI(TAG, "ROOM%d entry PIR detected", r + 1);
+        }
+        if (rising_out) {
+            ESP_LOGI(TAG, "ROOM%d exit PIR detected", r + 1);
+        }
+
+        if (rising_in || rising_out) {
+            bool counted_exit = false;
             xSemaphoreTake(S_mtx, portMAX_DELAY);
-            if (entered) {
-                S.room_occ[r]++;
-            } else if (S.room_occ[r] > 0) {
-                S.room_occ[r]--;
+            if (rising_in) {
+                S.room_entries[r]++;
+            } else if (S.room_exits[r] < S.room_entries[r]) {
+                S.room_exits[r]++;
+                counted_exit = true;
             }
-            bool want = S.room_occ[r] > 0;
+            bool want = S.room_entries[r] > S.room_exits[r];
             bool changed = (S.light[r] != want);
             S.light[r] = want;
-            int occupancy = S.room_occ[r];
+            int occupancy = S.room_entries[r] - S.room_exits[r];
             xSemaphoreGive(S_mtx);
 
             char m[64];
             snprintf(m, sizeof m, "ROOM%d,%s,occupancy=%d", r + 1,
-                     entered ? "IN" : "OUT", occupancy);
+                     rising_in ? "IN" : (counted_exit ? "OUT" : "OUT_IGNORED"),
+                     occupancy);
             logf_(m);
             if (changed) {
                 gpio_set_level(LIGHT_PIN[r], want);
@@ -198,8 +186,9 @@ static void cli_task(void *a) {
             xQueueSend(tap_q, &t, 0);
         } else if (strcmp(buf, "status") == 0) {
             xSemaphoreTake(S_mtx, portMAX_DELAY);
-            printf("inside=%d room1=%d(light %d) room2=%d(light %d)\n", S.inside,
-                   S.room_occ[0], S.light[0], S.room_occ[1], S.light[1]);
+             printf("inside=%d room1=in:%d out:%d(light %d) room2=in:%d out:%d(light %d)\n",
+                 S.inside, S.room_entries[0], S.room_exits[0], S.light[0],
+                 S.room_entries[1], S.room_exits[1], S.light[1]);
             xSemaphoreGive(S_mtx);
         }
         printf("> ");
@@ -215,6 +204,7 @@ void app_main(void) {
         gpio_set_direction(PIR_IN_PIN[i], GPIO_MODE_INPUT);
         gpio_set_direction(PIR_OUT_PIN[i], GPIO_MODE_INPUT);
         gpio_set_direction(LIGHT_PIN[i], GPIO_MODE_OUTPUT);
+        gpio_set_level(LIGHT_PIN[i], 0);
     }
     xTaskCreate(logger_task,   "logger",   4096, NULL, 4, NULL);
     xTaskCreate(entrance_task, "entrance", 4096, NULL, 5, NULL);
